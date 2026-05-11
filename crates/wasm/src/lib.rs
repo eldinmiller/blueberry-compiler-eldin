@@ -128,5 +128,13 @@ fn describe_codegen_error(err: &CodegenError) -> String {
         } => format!(
             "Message \"{message}\" member \"{member}\" uses unsupported type \"{type_name}\""
         ),
+        CodegenError::DuplicateMessageKey {
+            module_key,
+            message_key,
+            first,
+            second,
+        } => format!(
+            "Duplicate @message_key(0x{message_key:04x}) in module 0x{module_key:04x}: used by \"{first}\" and \"{second}\""
+        ),
     }
 }

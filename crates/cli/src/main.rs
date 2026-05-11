@@ -952,6 +952,14 @@ fn fmt_codegen_error(language: &str, err: CodegenError) -> Box<dyn Error> {
         } => format!(
             "{language} generation failed: member {member} in {message} uses unsupported type {type_name}"
         ),
+        CodegenError::DuplicateMessageKey {
+            module_key,
+            message_key,
+            first,
+            second,
+        } => format!(
+            "{language} generation failed: duplicate @message_key(0x{message_key:04x}) in module 0x{module_key:04x}: used by {first} and {second}"
+        ),
     };
     message.into()
 }

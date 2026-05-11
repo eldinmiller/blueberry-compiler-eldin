@@ -27,6 +27,12 @@ pub enum CodegenError {
         member: String,
         type_name: String,
     },
+    DuplicateMessageKey {
+        module_key: u16,
+        message_key: u16,
+        first: String,
+        second: String,
+    },
 }
 
 #[derive(Debug, Clone)]
