@@ -60,9 +60,11 @@ impl TypeScriptGenerator {
         &self,
         definitions: &[Definition],
     ) -> Result<Vec<GeneratedFile>, CodegenError> {
+        // BlueberryWriter / BlueberryReader are passed as callback parameters
+        // by serializeMessage / deserializeMessage; the generated message
+        // bodies never name them directly. Emit only the runtime values that
+        // appear in the body so generated TS passes `noUnusedLocals`.
         let mut imports: BTreeSet<&'static str> = BTreeSet::new();
-        imports.insert("BlueberryWriter");
-        imports.insert("BlueberryReader");
         imports.insert("MessageHeader");
         imports.insert("serializeMessage");
         imports.insert("deserializeMessage");
