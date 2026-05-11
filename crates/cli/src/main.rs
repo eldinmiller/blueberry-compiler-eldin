@@ -51,13 +51,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     let is_dir = options.input.is_dir();
 
     if is_dir
-        && (options.emit_rust
-            || options.emit_c
-            || options.emit_cpp
-            || options.emit_python
-            || options.emit_typescript)
+        && (options.emit_rust || options.emit_c || options.emit_cpp || options.emit_python)
     {
-        return Err("directory input only supports `--emit-idl`".into());
+        return Err(
+            "directory input only supports `--emit-idl` and `--emit-typescript`".into(),
+        );
     }
 
     let definitions = if is_dir {
