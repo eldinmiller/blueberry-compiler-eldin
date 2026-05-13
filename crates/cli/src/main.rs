@@ -49,8 +49,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let options = cli::get();
     let is_dir = options.input.is_dir();
 
-    if is_dir && (options.emit_rust || options.emit_c || options.emit_cpp || options.emit_python) {
-        return Err("folder input is currently only supported with --emit-idl".into());
+    if is_dir && (options.emit_rust || options.emit_cpp || options.emit_python) {
+        return Err("folder input is currently only supported with --emit-idl and --emit-c".into());
     }
 
     let definitions = if is_dir {
