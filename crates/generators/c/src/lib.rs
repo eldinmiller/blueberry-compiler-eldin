@@ -1031,6 +1031,7 @@ fn emit_sequence_sub_field_prototypes(
 ) {
     let combined = format!("{}{}", capitalize(&field.name), capitalize(&sub.name));
     let return_ty = c_type_name(ctx, &sub.ty);
+    let resolved = enum_or_scalar_base(ctx, &sub.ty);
     emit_doc_block(
         out,
         &[
@@ -1041,18 +1042,28 @@ fn emit_sequence_sub_field_prototypes(
         ],
         &sub.comments,
     );
-    if is_bool_type(&sub.ty) {
-        let _ = writeln!(
-            out,
-            "bool is{}{}(Bb * buf, BbBlock msg , uint32_t i0);",
-            m.name, combined
-        );
-    } else {
-        let _ = writeln!(
-            out,
-            "{} get{}{}(Bb * buf, BbBlock msg , uint32_t i0);",
-            return_ty, m.name, combined
-        );
+    match resolved {
+        ResolvedScalar::Bool => {
+            let _ = writeln!(
+                out,
+                "bool is{}{}(Bb * buf, BbBlock msg , uint32_t i0);",
+                m.name, combined
+            );
+        }
+        ResolvedScalar::StringBounded(_) => {
+            let _ = writeln!(
+                out,
+                "uint32_t get{}{}(Bb * buf, BbBlock msg , uint32_t i0, char * dest);",
+                m.name, combined
+            );
+        }
+        _ => {
+            let _ = writeln!(
+                out,
+                "{} get{}{}(Bb * buf, BbBlock msg , uint32_t i0);",
+                return_ty, m.name, combined
+            );
+        }
     }
     emit_doc_block(
         out,
@@ -1065,11 +1076,22 @@ fn emit_sequence_sub_field_prototypes(
         ],
         &sub.comments,
     );
-    let _ = writeln!(
-        out,
-        "void set{}{}(Bb * buf, BbBlock msg , uint32_t i0, {} {});",
-        m.name, combined, return_ty, sub.name
-    );
+    match resolved {
+        ResolvedScalar::StringBounded(_) => {
+            let _ = writeln!(
+                out,
+                "uint32_t set{}{}(Bb * buf, BbBlock msg , uint32_t i0, char * {});",
+                m.name, combined, sub.name
+            );
+        }
+        _ => {
+            let _ = writeln!(
+                out,
+                "void set{}{}(Bb * buf, BbBlock msg , uint32_t i0, {} {});",
+                m.name, combined, return_ty, sub.name
+            );
+        }
+    }
 }
 
 fn render_add_signature(ctx: &Context, m: &MessageModel) -> String {
@@ -1430,30 +1452,56 @@ fn emit_sequence_sub_field_source(
     } else {
         format!("get{}{}", m.name, combined)
     };
-    let return_signature = if matches!(resolved, ResolvedScalar::Bool) { "bool" } else { return_ty.as_str() };
-    let _ = writeln!(
-        out,
-        "{} {}(Bb * buf, BbBlock msg , uint32_t i0){{",
-        return_signature, getter_name
-    );
-    out.push_str("\tuint16_t i = 0;\n");
-    let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
-    out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
-    let _ = writeln!(
-        out,
-        "\ti += {}_{}_{}_INDEX;",
-        msg_token, field_tok, sub_tok
-    );
-    if matches!(resolved, ResolvedScalar::Bool) {
-        let _ = writeln!(
-            out,
-            "\treturn getBbBool(buf, msg, i, {});",
-            bool_mask_token_for_sub(m, field, sub)
-        );
-    } else {
-        let _ = writeln!(out, "\treturn {}(buf, msg, i);", helper_get);
+    match &resolved {
+        ResolvedScalar::Bool => {
+            let _ = writeln!(
+                out,
+                "bool {}(Bb * buf, BbBlock msg , uint32_t i0){{",
+                getter_name
+            );
+            out.push_str("\tuint16_t i = 0;\n");
+            let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
+            out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
+            let _ = writeln!(out, "\ti += {}_{}_{}_INDEX;", msg_token, field_tok, sub_tok);
+            let _ = writeln!(
+                out,
+                "\treturn getBbBool(buf, msg, i, {});",
+                bool_mask_token_for_sub(m, field, sub)
+            );
+            out.push_str("}\n");
+        }
+        ResolvedScalar::StringBounded(bound) => {
+            let _ = writeln!(
+                out,
+                "uint32_t {}(Bb * buf, BbBlock msg , uint32_t i0, char * dest){{",
+                getter_name
+            );
+            out.push_str("\tuint16_t i = 0;\n");
+            let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
+            out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
+            let _ = writeln!(out, "\ti += {}_{}_{}_INDEX;", msg_token, field_tok, sub_tok);
+            let _ = writeln!(
+                out,
+                "\treturn copyBbStringFromMessage(buf, msg, i, dest, {});",
+                bound
+            );
+            out.push_str("}\n");
+        }
+        _ => {
+            let _ = writeln!(
+                out,
+                "{} {}(Bb * buf, BbBlock msg , uint32_t i0){{",
+                return_ty.as_str(),
+                getter_name
+            );
+            out.push_str("\tuint16_t i = 0;\n");
+            let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
+            out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
+            let _ = writeln!(out, "\ti += {}_{}_{}_INDEX;", msg_token, field_tok, sub_tok);
+            let _ = writeln!(out, "\treturn {}(buf, msg, i);", helper_get);
+            out.push_str("}\n");
+        }
     }
-    out.push_str("}\n");
 
     // setter
     emit_doc_block(
@@ -1467,33 +1515,53 @@ fn emit_sequence_sub_field_source(
         ],
         &sub.comments,
     );
-    let _ = writeln!(
-        out,
-        "void set{}{}(Bb * buf, BbBlock msg , uint32_t i0, {} {}){{",
-        m.name, combined, return_ty, sub.name
-    );
-    out.push_str("\tuint16_t i = 0;\n");
-    let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
-    out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
-    let _ = writeln!(
-        out,
-        "\ti += {}_{}_{}_INDEX;",
-        msg_token, field_tok, sub_tok
-    );
-    out.push_str("\tif(isBbBlockInvalid(i)){\n");
-    out.push_str("\t\treturn;//bail because a sequence was not initialized\n");
-    out.push_str("\t}\n");
-    if matches!(resolved, ResolvedScalar::Bool) {
-        let _ = writeln!(
-            out,
-            "\tsetBbBool(buf, msg, i, {}, {});",
-            bool_mask_token_for_sub(m, field, sub),
-            sub.name
-        );
-    } else {
-        let _ = writeln!(out, "\t{}(buf, msg, i, {});", helper_set, sub.name);
+    match &resolved {
+        ResolvedScalar::StringBounded(bound) => {
+            let _ = writeln!(
+                out,
+                "uint32_t set{}{}(Bb * buf, BbBlock msg , uint32_t i0, char * {}){{",
+                m.name, combined, sub.name
+            );
+            out.push_str("\tuint16_t i = 0;\n");
+            let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
+            out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
+            let _ = writeln!(out, "\ti += {}_{}_{}_INDEX;", msg_token, field_tok, sub_tok);
+            out.push_str("\tif(isBbBlockInvalid(i)){\n");
+            out.push_str("\t\treturn 0;//bail because a sequence was not initialized\n");
+            out.push_str("\t}\n");
+            let _ = writeln!(
+                out,
+                "\treturn copyBbStringToMessage(buf, msg, i, {}, {});",
+                sub.name, bound
+            );
+            out.push_str("}\n");
+        }
+        _ => {
+            let _ = writeln!(
+                out,
+                "void set{}{}(Bb * buf, BbBlock msg , uint32_t i0, {} {}){{",
+                m.name, combined, return_ty, sub.name
+            );
+            out.push_str("\tuint16_t i = 0;\n");
+            let _ = writeln!(out, "\ti += {}_{}_PLACEHOLDER_INDEX;", msg_token, field_tok);
+            out.push_str("\ti = getBbSequenceElementIndex(buf, msg, i, i0);\n");
+            let _ = writeln!(out, "\ti += {}_{}_{}_INDEX;", msg_token, field_tok, sub_tok);
+            out.push_str("\tif(isBbBlockInvalid(i)){\n");
+            out.push_str("\t\treturn;//bail because a sequence was not initialized\n");
+            out.push_str("\t}\n");
+            if matches!(resolved, ResolvedScalar::Bool) {
+                let _ = writeln!(
+                    out,
+                    "\tsetBbBool(buf, msg, i, {}, {});",
+                    bool_mask_token_for_sub(m, field, sub),
+                    sub.name
+                );
+            } else {
+                let _ = writeln!(out, "\t{}(buf, msg, i, {});", helper_set, sub.name);
+            }
+            out.push_str("}\n");
+        }
     }
-    out.push_str("}\n");
 }
 
 fn emit_sequence_primitive_source(
@@ -1601,10 +1669,14 @@ fn collect_index_macros(m: &MessageModel, out: &mut Vec<String>) {
                         }
                     }
                     SequenceElement::Primitive(_) => {
-                        // Primitive sequences expose a `_<FIELD>_INDEX (0)` macro for the
-                        // (single) sub-element so the accessor body matches the struct case.
+                        // Primitive sequences expose a `<MSG>_<FIELD>_INDEX (0)` macro for
+                        // the (single) sub-element so the accessor body references the
+                        // same name the legacy `blueberry-schema-parser` emits (e.g.
+                        // `APP_DATA_MESSAGE_FLOATS_INDEX`). The placeholder index above
+                        // already carries the `_PLACEHOLDER_` infix, so the two names do
+                        // not collide.
                         out.push(format!(
-                            "#define {}_{}_DATA_INDEX (0)",
+                            "#define {}_{}_INDEX (0)",
                             msg_token,
                             to_screaming_snake(&f.name)
                         ));
@@ -1650,12 +1722,9 @@ fn collect_ordinal_macros(m: &MessageModel, out: &mut Vec<String>) {
                         }
                     }
                     SequenceElement::Primitive(_) => {
-                        out.push(format!(
-                            "#define {}_{}_DATA_ORDINAL ({})",
-                            msg_token,
-                            to_screaming_snake(&f.name),
-                            f.ordinal
-                        ));
+                        // The legacy emitter does not produce a per-element ordinal for
+                        // primitive sequences (no nested struct → no sub-field ordinals).
+                        // Only the placeholder ordinal above is emitted.
                     }
                 }
             }
@@ -2231,6 +2300,140 @@ mod tests {
         assert!(
             source.contains(expected),
             "addVersionMessage body diverged from legacy ABI.\nGenerated:\n{}",
+            source
+        );
+    }
+
+    /// Regression for Bug B: primitive-sequence fields must emit a
+    /// `<MSG>_<FIELD>_INDEX (0)` macro (NOT `<MSG>_<FIELD>_DATA_INDEX`) so the
+    /// `i += <MSG>_<FIELD>_INDEX;` line inside the generated accessor body
+    /// resolves to a defined macro. This matches the legacy
+    /// `blueberry-schema-parser` emission and is what the 21-error firmware
+    /// build failure in Lane F's report calls out.
+    #[test]
+    fn primitive_sequence_emits_index_macro_without_data_infix() {
+        let src = r#"
+            @module_key(0x4244)
+            module ::Blueberry::Devices {
+                @topic("blueberry/devices/app-data")
+                @message_key(0xa000)
+                message AppDataMessage {
+                    sequence<float> floats;
+                };
+            };
+        "#;
+        let defs = parse(src);
+        let files = generate(&defs).unwrap();
+        let source = &files[1].contents;
+        assert!(
+            source.contains("#define APP_DATA_MESSAGE_FLOATS_INDEX (0)"),
+            "missing primitive-sequence INDEX macro.\n{}",
+            source
+        );
+        // The legacy generator does NOT emit a `_DATA_INDEX` form — make sure
+        // we did not leave the stale macro behind under both names.
+        assert!(
+            !source.contains("APP_DATA_MESSAGE_FLOATS_DATA_INDEX"),
+            "stale `_DATA_INDEX` macro still emitted.\n{}",
+            source
+        );
+        // The accessor body must reference the canonical name; if either the
+        // body or the macro drifts the firmware link breaks.
+        assert!(
+            source.contains("\ti += APP_DATA_MESSAGE_FLOATS_INDEX;"),
+            "accessor body does not reference the canonical INDEX macro.\n{}",
+            source
+        );
+        // Legacy does not emit a per-element ORDINAL for primitive sequences.
+        assert!(
+            !source.contains("APP_DATA_MESSAGE_FLOATS_DATA_ORDINAL"),
+            "spurious per-element ORDINAL emitted for primitive sequence.\n{}",
+            source
+        );
+    }
+
+    /// Regression for Bug A: sequence-of-struct sub-fields whose type is a
+    /// bounded string must emit accessors that match the legacy 5-arg
+    /// `copyBbString{From,To}Message(buf, msg, i, ptr, n)` signature. The
+    /// generated wrapper bakes the IDL bound into the `n` argument so callers
+    /// keep the simple `(buf, msg, i0, char*)` shape.
+    #[test]
+    fn bounded_string_sub_field_calls_match_legacy_arity() {
+        let src = r#"
+            @module_key(0x4244)
+            module ::Blueberry::Devices {
+                struct ManifestEntry {
+                    uint16 moduleKey;
+                    string<64> name;
+                    string<16> unit;
+                };
+                @topic("blueberry/devices/manifest-part")
+                @message_key(0x9102)
+                message ManifestPartMessage {
+                    sequence<ManifestEntry> entries;
+                };
+            };
+        "#;
+        let defs = parse(src);
+        let files = generate(&defs).unwrap();
+        let header = &files[0].contents;
+        let source = &files[1].contents;
+
+        // Prototypes: getter takes a `char * dest`, setter takes `char * name`.
+        assert!(
+            header.contains(
+                "uint32_t getManifestPartMessageEntriesName(Bb * buf, BbBlock msg , uint32_t i0, char * dest);"
+            ),
+            "string getter prototype missing dest parameter.\n{}",
+            header
+        );
+        assert!(
+            header.contains(
+                "uint32_t setManifestPartMessageEntriesName(Bb * buf, BbBlock msg , uint32_t i0, char * name);"
+            ),
+            "string setter prototype missing src parameter or wrong return type.\n{}",
+            header
+        );
+        assert!(
+            header.contains(
+                "uint32_t getManifestPartMessageEntriesUnit(Bb * buf, BbBlock msg , uint32_t i0, char * dest);"
+            ),
+            "string getter prototype for unit missing dest parameter.\n{}",
+            header
+        );
+
+        // Source bodies: the `copyBbString*Message` calls must pass 5 args, and
+        // the IDL bound (64 for name, 16 for unit) is baked in as the `n` arg.
+        assert!(
+            source.contains("return copyBbStringFromMessage(buf, msg, i, dest, 64);"),
+            "name getter does not call copyBbStringFromMessage with 5 args.\n{}",
+            source
+        );
+        assert!(
+            source.contains("return copyBbStringToMessage(buf, msg, i, name, 64);"),
+            "name setter does not call copyBbStringToMessage with 5 args.\n{}",
+            source
+        );
+        assert!(
+            source.contains("return copyBbStringFromMessage(buf, msg, i, dest, 16);"),
+            "unit getter does not bake the `string<16>` bound into the `n` arg.\n{}",
+            source
+        );
+        assert!(
+            source.contains("return copyBbStringToMessage(buf, msg, i, unit, 16);"),
+            "unit setter does not bake the `string<16>` bound into the `n` arg.\n{}",
+            source
+        );
+
+        // Sanity: the broken 3-arg / 4-arg forms must not appear anywhere.
+        assert!(
+            !source.contains("return copyBbStringFromMessage(buf, msg, i);"),
+            "broken 3-arg copyBbStringFromMessage call still present.\n{}",
+            source
+        );
+        assert!(
+            !source.contains("\tcopyBbStringToMessage(buf, msg, i, name);"),
+            "broken 4-arg copyBbStringToMessage call still present.\n{}",
             source
         );
     }
