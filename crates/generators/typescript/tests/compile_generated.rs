@@ -146,3 +146,42 @@ fn generated_typescript_from_blueberry_full_compiles() {
         String::from_utf8_lossy(&tsc_output.stderr),
     );
 }
+
+#[test]
+fn lowercase_idl_enum_emits_pascal_case_declaration() {
+    let idl = r#"
+        module Blueberry {
+            enum parameter8 : uint8 {
+                REVID = 0,
+                ID = 1,
+            };
+            @message_key(0xc342)
+            @topic("blueberry/devices/tcs3400-data8")
+            message Tcs3400Data8Message {
+                parameter8 param;
+                uint8 data;
+            };
+        };
+    "#;
+    let definitions = parse_idl(idl).expect("parse lowercase-enum IDL");
+    let files = generate(&definitions).expect("generate typescript");
+    let messages = files
+        .iter()
+        .find(|file| file.path.ends_with("blueberry_messages.ts"))
+        .expect("blueberry_messages.ts");
+    assert!(
+        messages.contents.contains("export enum Parameter8"),
+        "expected PascalCase enum declaration, got:\n{}",
+        messages.contents
+    );
+    assert!(
+        messages.contents.contains("param: Parameter8"),
+        "expected PascalCase enum type reference, got:\n{}",
+        messages.contents
+    );
+    assert!(
+        !messages.contents.contains("export enum parameter8"),
+        "IDL camelCase enum name leaked into the declaration:\n{}",
+        messages.contents
+    );
+}

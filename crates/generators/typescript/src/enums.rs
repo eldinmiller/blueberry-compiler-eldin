@@ -3,10 +3,12 @@
 use blueberry_ast::{Commented, ConstValue, EnumDef};
 
 use crate::TypeScriptGenerator;
+use crate::naming::pascal_case;
 
 impl TypeScriptGenerator {
     pub(crate) fn emit_enum(&self, enum_def: &Commented<EnumDef>) -> String {
-        let name = &enum_def.node.name;
+        // Match render_ts_type / decode casts, which PascalCase scoped names.
+        let name = pascal_case(&enum_def.node.name);
         let mut out = String::new();
         out.push_str(&format!("export enum {name} {{\n"));
 
